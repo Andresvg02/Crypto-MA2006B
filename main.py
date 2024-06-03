@@ -2,38 +2,74 @@
 # https://crypto-ma2006b-casamonarca.streamlit.app/
 
 import json
-import sqlite3
-import mysql.connector
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from Crypto.Random import get_random_bytes
 import streamlit as st
 from streamlit_option_menu import option_menu
 from datetime import datetime
-import os
 import base64
 from Crypto.Util.Padding import unpad
 from PIL import Image
 import io
 import pandas as pd
-import matplotlib.pyplot as plt
 import plotly.express as px
+import mysql.connector
 
+# Función genérica para establecer conexión a la base de datos
+def conectar_bd():
+    endpoint = "usersview.cbyy8g222bry.us-east-2.rds.amazonaws.com"
+    port = 3306
+    user = "admin"
+    password_db = "123Segurita."
+    database = "formularios"
+    try:
+        connection = mysql.connector.connect(
+            host=endpoint,
+            port=port,
+            user=user,
+            password=password_db,
+            database=database
+        )
+        return connection
+    except mysql.connector.Error as error:
+        st.error(f"Error al conectarse a la base de datos: {error}")
+        return None
 
-USUARIOS = {
-    "admin": {"password": "admin123", "rol": "jerarquia_mayor"},
-    "user2": {"password": "password2", "rol": "jerarquia_media"},
-    "user3": {"password": "password3", "rol": "jerarquia_menor"}
-}
-
+# Función para verificar credenciales contra la base de datos
 def verificar_credenciales(username, password):
-    if username in USUARIOS and USUARIOS[username]["password"] == password:
-        return USUARIOS[username]["rol"]
+    connection = conectar_bd()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT password, rol FROM usuarios WHERE username = %s", (username,))
+            result = cursor.fetchone()
+            if result and result[0] == password:
+                return result[1]
+        finally:
+            connection.close()
     return None
 
+# Función para crear el usuario administrador si no existe
+def crear_usuario_admin():
+    connection = conectar_bd()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT COUNT(*) FROM usuarios WHERE username = 'admin'")
+            result = cursor.fetchone()
+            if result[0] == 0:
+                cursor.execute("INSERT INTO usuarios (username, password, rol) VALUES (%s, %s, %s)", ('admin', 'admin123', 'jerarquia_mayor'))
+                connection.commit()
+        finally:
+            connection.close()
+
 def login():
-        # Crear barra lateral para la selección de la opción
-        # Variable de sesión para el estado de inicio de sesión
+    # Crear el usuario administrador si no existe
+    crear_usuario_admin()
+
+    # Crear barra lateral para la selección de la opción
+    # Variable de sesión para el estado de inicio de sesión
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.rol = None
@@ -50,6 +86,7 @@ def login():
                 st.session_state.rol = rol
                 st.session_state.username = username
                 st.success("Inicio de sesión exitoso")
+                st.rerun()
             else:
                 st.error("Nombre de usuario o contraseña incorrectos")
     else:
@@ -68,43 +105,18 @@ def login():
             if st.button("Cerrar sesión"):
                 st.session_state.logged_in = False
                 st.session_state.rol = None
-                st.experimental_rerun()
-        main()
+                st.rerun()
+        
+        main(option)
 
 
-def main():
-    #link_llaves = "llaves"
-    #with st.sidebar:
-    #    option = option_menu(
-    #    menu_title = "Menu",
-    #    options = ['Cuestionario', 'Consulta de información', 'Dashboard'] 
-    #)
-
-    if option == 'Cuestionario':       
-        # Función para crear la tabla si no existe
+def main(option):
+    if option == 'Cuestionario':
+        
         def crear_tabla():
-            # Detalles de la conexión
-            endpoint = "usersview.cbyy8g222bry.us-east-2.rds.amazonaws.com"
-            port = 3306
-            user = "admin"
-            password = "123Segurita."
-            database = "formularios"  # Reemplaza "nombre_de_tu_base_de_datos" con el nombre de tu base de datos
-        
-            try:
-                # Establecer la conexión
-                connection = mysql.connector.connect(
-                    host=endpoint,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database
-                )
-        
-                # Verificar si la conexión fue exitosa
-                if connection.is_connected():
-                    #print("¡Conexión exitosa!")
-        
-                    # Crear la tabla si no existe
+            connection = conectar_bd()
+            if connection:
+                try:
                     cursor = connection.cursor()
                     cursor.execute('''CREATE TABLE IF NOT EXISTS formularios (
                                         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -115,23 +127,9 @@ def main():
                                         tipo_poblacion VARCHAR(255),
                                         iv BLOB,
                                         formulario_cifrado BLOB)''')
-                    #print("Tabla creada o ya existente.")
-        
-                    # Guardar los cambios en la base de datos
                     connection.commit()
-                    #print("Cambios guardados.")
-        
-                else:
-                    print("¡Error de conexión!")
-        
-            except mysql.connector.Error as error:
-                print("Error al conectarse a la base de datos:", error)
-        
-            finally:
-                # Cerrar la conexión
-                if 'connection' in locals() and connection.is_connected():
+                finally:
                     connection.close()
-                    #print("Conexión cerrada.")
         
         # Función para cifrar datos usando AES
         def cifrar_datos(datos, secret_key):
@@ -141,54 +139,19 @@ def main():
             return iv, ciphertext
         
         # Función para guardar el JSON cifrado en la base de datos
-        def guardar_json_cifrado(iv, ciphertext, nombre_usuario, fecha_atencion,edad, genero,tipo_poblacion):
-            # Detalles de la conexión
-            endpoint = "usersview.cbyy8g222bry.us-east-2.rds.amazonaws.com"
-            port = 3306
-            user = "admin"
-            password = "123Segurita."
-            database = "formularios" 
-        
-            try:
-                # Establecer la conexión
-                connection = mysql.connector.connect(
-                    host=endpoint,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database
-                )
-        
-                # Verificar si la conexión fue exitosa
-                if connection.is_connected():
-                    #print("¡Conexión exitosa!")
-        
-                    # Insertar los datos en la tabla
+        def guardar_json_cifrado(iv, ciphertext, nombre_usuario, fecha_atencion, edad, genero, tipo_poblacion):
+            connection = conectar_bd()
+            if connection:
+                try:
                     cursor = connection.cursor()
                     cursor.execute("""
                     INSERT INTO formularios 
                     (nombre_usuario, fecha, genero, iv, formulario_cifrado, edad, tipo_poblacion) 
                     VALUES (%s, %s, %s, %s, %s, %s, %s)""", (nombre_usuario, fecha_atencion, genero, iv, ciphertext, edad, tipo_poblacion))
-
-                    print("Datos insertados correctamente.")
-        
-                    # Guardar los cambios en la base de datos
                     connection.commit()
-                    print("Cambios guardados.")
-        
-                else:
-                    print("¡Error de conexión!")
-        
-            except mysql.connector.Error as error:
-                print("Error al conectarse a la base de datos:", error)
-        
-            finally:
-                # Cerrar la conexión
-                if 'connection' in locals() and connection.is_connected():
+                finally:
                     connection.close()
-                    #print("Conexión cerrada.")
-
-    
+        
         # Función para descargar la llave privada AES
         def descargar_llave_privada(secret_key, nombre_usuario):
             # Crear el contenido del archivo como bytes
@@ -203,15 +166,12 @@ def main():
                 mime='text/plain'
             )
         
-        
-        
         def preguntas_cuestionario():
             min_date = datetime(1950, 1, 1)
-            # Crear el diccionario para almacenar las respuestas
             datos = {
                 "fecha_atencion": str(st.date_input('Fecha de atención (yyyy-mm-dd)',
                                      min_value=min_date)),
-                "tipo_persona": st.selectbox('Tipo de persona', ['Selecciona una opción'] + ['Adulto', 'Adulto', 'Niña acompañada', 'Niño acompañado', 
+                "tipo_persona": st.selectbox('Tipo de persona', ['Selecciona una opción'] + ['Adulto', 'Niña acompañada', 'Niño acompañado', 
                                                                  'Adolescente acompañado', 'Niña no acompañada', 
                                                                  'Niño no acompañado', 'Adolescente no acompañado']),
                 "telefono_contacto": st.text_input('Número telefónico de contacto'),
@@ -221,11 +181,11 @@ def main():
                 "edad": st.number_input('Edad', min_value=0, max_value=150),
                 "pais_origen": st.selectbox('País de origen', ['Selecciona una opción'] + ['México', 'Estados Unidos de América', 'Guatemala', 'Honduras',
                                                                 'El Salvador', 'Venezuela', 'Nicaragua', 'Haití', 'Colombia',
-                                                                'Cuba', 'Argentina', 'Afganistan', 'Siria', 'Alemania', 'Brasil',
+                                                                'Cuba', 'Argentina', 'Afganistán', 'Siria', 'Alemania', 'Brasil',
                                                                 'Perú', 'Guayana Francesa', 'Belice', 'Panamá', 'Ecuador']),
                 "departamento_estado": st.text_input('Departamento / Estado'),
-                "estado_civil": st.selectbox('Estado Civil', ['Selecciona una opción'] + ['Casado / Casado', 'Divorciado / Divorciado', 'Soltera / Soltero',
-                                                               'Separada / Separada', 'Viuda / Viudo', 'Unión Libre']),
+                "estado_civil": st.selectbox('Estado Civil', ['Selecciona una opción'] + ['Casado/a', 'Divorciado/a', 'Soltero/a',
+                                                               'Separado/a', 'Viudo/a', 'Unión Libre']),
                 "tipo_poblacion": st.selectbox('Tipo de población', ['Selecciona una opción'] + ['Tránsito', 'MPP', 'Retornados', 'Refugiados',
                                                                       'Desplazados internos', 'Otra movilidad']),
                 "documento_identidad": st.selectbox('Documento de identidad', ['Selecciona una opción'] +['Tarjeta de identidad de país de origen',
@@ -239,8 +199,8 @@ def main():
                                                                                                   'Bachillerato técnico',
                                                                                                   'Licenciatura', 'Sin escolarizar']),
                 "ultimo_grado_academico": st.text_input('¿Cuál fue su último grado académico?'),
-                "idiomas": st.multiselect('Idiomas que domina', ['Selecciona una opción'] + ['Inglés', 'Español', 'Frances', 'Criollo haitiano',
-                                                                   'Garífona', 'Otro idioma', 'Portugues']),
+                "idiomas": st.multiselect('Idiomas que domina', ['Selecciona una opción'] + ['Inglés', 'Español', 'Francés', 'Criollo haitiano',
+                                                                   'Garífona', 'Otro idioma', 'Portugués']),
                 "fecha_salida_pais_origen": str(st.date_input('Fecha en que salió de su país de origen')),
                 "viajando": st.selectbox('¿Cómo se encuentra viajando?', ['Selecciona una opción'] +['Sola/o', 'Acompañada/o']),
                 "viajo_como": st.text_input('¿Cómo viajó?'),
@@ -250,7 +210,7 @@ def main():
                 "pago_guia": st.selectbox('En algún momento de su camino, ¿Usted le pagó a algún guía para viajar?',['Selecciona una opción'] + ['Si', 'No']),
                 "fecha_ingreso_mexico": str(st.date_input('Fecha en que ingresó a México (yyyy-mm-dd)',
                                      min_value=min_date)),
-                "donde_ingreso_mexico": st.selectbox('¿Por dónde ingresó a México?', ['Selecciona una opción'] +['Tapachula', 'Tenosoique', 'Chetumal', 'Palenque', 'Matamoros', 'Reynosa', 'Veracruz', 'Tabasco', 'Chiapas']),
+                "donde_ingreso_mexico": st.selectbox('¿Por dónde ingresó a México?', ['Selecciona una opción'] +['Tapachula', 'Tenosique', 'Chetumal', 'Palenque', 'Matamoros', 'Reynosa', 'Veracruz', 'Tabasco', 'Chiapas']),
                 "destino_final": st.selectbox('¿Cuál es su destino final?', ['Selecciona una opción'] +['México', 'Estados Unidos', 'Regresar a mi país de origen']),
                 "red_apoyo_monterrey": st.selectbox('¿Cuenta con una red de apoyo en Monterrey?', ['Selecciona una opción'] +['Si', 'No']),
                 "intento_ingresar_estados_unidos": st.selectbox('¿Usted ha intentado ingresar a Estados Unidos?', ['Selecciona una opción'] +['Si', 'No']),
@@ -272,8 +232,8 @@ def main():
                                                                                                              'Orientación en el acceso a la educación',
                                                                                                              'Orientación en la búsqueda de vivienda',
                                                                                                              'Orientación para acceder a servicios de salud',
-                                                                                                             'Orientación a servicios prisológicos',
-                                                                                                             'Canalización a servicios pricológicos',
+                                                                                                             'Orientación a servicios psicológicos',
+                                                                                                             'Canalización a servicios psicológicos',
                                                                                                              'Atención psicosocial']),
                 "foto_frente": st.file_uploader('Fotografía de frente'),
                 "foto_perfil_izquierdo": st.file_uploader('Fotografía perfil izquierdo'),
@@ -332,7 +292,7 @@ def main():
                     iv, ciphertext = cifrar_datos(datos, secret_key)
         
                     # Guardar JSON cifrado en la base de datos
-                    guardar_json_cifrado(iv, ciphertext, nombre_usuario, datos["fecha_atencion"],datos['edad'], datos["sexo"],datos['tipo_poblacion'])
+                    guardar_json_cifrado(iv, ciphertext, nombre_usuario, datos["fecha_atencion"], datos['edad'], datos["sexo"], datos["tipo_poblacion"])
         
                     # Descargar la llave privada
                     descargar_llave_privada(secret_key, nombre_usuario)
@@ -343,74 +303,46 @@ def main():
             main_crypt()
         
         pass
+    
     elif option == 'Consulta de información':
-        #
-        # Función para decifrar los datos usando la clave secreta AES
+    # Función para decifrar los datos usando la clave secreta AES
         def decifrar_datos(iv, encrypted_data, secret_key):
             cipher = AES.new(secret_key, AES.MODE_CBC, iv)
             decrypted_data = unpad(cipher.decrypt(encrypted_data), AES.block_size)
             return decrypted_data
         
         # Función para obtener los datos cifrados desde la base de datos
-        def obtener_datos_cifrados(nombre_usuario):
-            # Detalles de la conexión
-            endpoint = "usersview.cbyy8g222bry.us-east-2.rds.amazonaws.com"
-            port = 3306
-            user = "admin"
-            password = "123Segurita."
-            database = "formularios"
-        
-            try:
-                # Establecer la conexión
-                connection = mysql.connector.connect(
-                    host=endpoint,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database
-                )
-        
-                # Verificar si la conexión fue exitosa
-                if connection.is_connected():
-                    #print("¡Conexión exitosa!")
-        
-                    # Obtener los datos cifrados de la base de datos
+        def obtener_datos_cifrados(nombre_usuario, fecha_inicio, fecha_fin):
+            connection = conectar_bd()
+            if connection:
+                try:
                     cursor = connection.cursor()
                     cursor.execute("""SELECT iv, formulario_cifrado
                                       FROM formularios
-                                      WHERE nombre_usuario = %s
+                                      WHERE nombre_usuario = %s AND fecha BETWEEN %s AND %s
                                       ORDER BY id DESC
-                                      LIMIT 1""", (nombre_usuario,))
-                    iv, encrypted_data = cursor.fetchone()
-                    #print("Datos obtenidos correctamente.")
-        
-                    return iv, encrypted_data
-        
-                else:
-                    print("¡Error de conexión!")
-        
-            except mysql.connector.Error as error:
-                print("Error al conectarse a la base de datos:", error)
-                return None, None
-        
-            finally:
-                # Cerrar la conexión
-                if 'connection' in locals() and connection.is_connected():
+                                      LIMIT 1""", (nombre_usuario, fecha_inicio, fecha_fin))
+                    result = cursor.fetchone()
+                    if result:
+                        return result[0], result[1]
+                finally:
                     connection.close()
-                    #print("Conexión cerrada.")
-        
+            return None, None
+                    
         # Función principal para decifrar los datos
-        def decifrar_y_mostrar_datos(nombre_usuario, secret_key):
+        def decifrar_y_mostrar_datos(nombre_usuario, secret_key, fecha_inicio, fecha_fin):
             try:
                 # Obtener los datos cifrados desde la base de datos
-                iv, encrypted_data = obtener_datos_cifrados(nombre_usuario)
-        
-                # Decifrar los datos
-                decrypted_data = decifrar_datos(iv, encrypted_data, secret_key)
-                formulario_desencriptado = json.loads(decrypted_data.decode())
-                mostrar_ficha_tecnica(formulario_desencriptado)
+                iv, encrypted_data = obtener_datos_cifrados(nombre_usuario, fecha_inicio, fecha_fin)
+                if iv and encrypted_data:
+                    # Decifrar los datos
+                    decrypted_data = decifrar_datos(iv, encrypted_data, secret_key)
+                    formulario_desencriptado = json.loads(decrypted_data.decode())
+                    mostrar_ficha_tecnica(formulario_desencriptado)
+                else:
+                    st.error("No se encontraron datos para el usuario y el rango de fechas seleccionados.")
             except Exception as e:
-                st.error("Error al decifrar los datos. Asegúrate de haber seleccionado la clave secreta correcta.")
+                st.error(f"Error al decifrar los datos: {e}")
         
         # Función para mostrar la información del formulario en formato de ficha técnica
         def mostrar_ficha_tecnica(formulario):
@@ -430,44 +362,22 @@ def main():
             st.image("logo_casa_monarca.png", use_column_width=False)
         
             st.title("Desencriptar Información")
+
+            # Filtro de fecha
+            st.sidebar.header("Filtro de Fechas")
+            fecha_inicio = st.sidebar.date_input("Fecha de inicio", value=datetime.now())
+            fecha_fin = st.sidebar.date_input("Fecha de fin", value=datetime.now())
         
             # Dropdown para seleccionar el usuario
-            endpoint = "usersview.cbyy8g222bry.us-east-2.rds.amazonaws.com"
-            port = 3306
-            user = "admin"
-            password = "123Segurita."
-            database = "formularios"
-            
-            try:
-                # Establecer la conexión
-                connection = mysql.connector.connect(
-                    host=endpoint,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database
-                )
-            
-                # Verificar si la conexión fue exitosa
-                if connection.is_connected():
-                    #print("¡Conexión exitosa!")
-            
-                    # Obtener los nombres de usuario de la base de datos
+            connection = conectar_bd()
+            nombres_usuarios = []
+            if connection:
+                try:
                     cursor = connection.cursor()
-                    cursor.execute("SELECT DISTINCT nombre_usuario FROM formularios")
+                    cursor.execute("SELECT DISTINCT nombre_usuario FROM formularios WHERE fecha BETWEEN %s AND %s", (fecha_inicio, fecha_fin))
                     nombres_usuarios = [row[0] for row in cursor.fetchall()]
-                    #print("Nombres de usuarios obtenidos correctamente.")
-            
-                    # Cerrar la conexión
+                finally:
                     connection.close()
-                    #print("Conexión cerrada.")
-            
-                else:
-                    print("¡Error de conexión!")
-            
-            except mysql.connector.Error as error:
-                print("Error al conectarse a la base de datos:", error)
-                nombres_usuarios = []
             
             # Crear el dropdown para seleccionar un nombre de usuario
             nombre_usuario_seleccionado = st.selectbox("Selecciona un nombre de usuario:", ["Seleccione una opción"] + nombres_usuarios)
@@ -475,54 +385,27 @@ def main():
             # Subir la clave secreta
             secret_key = st.file_uploader("Subir clave secreta", type="txt")
         
-            if secret_key is not None:
+            if secret_key is not None and nombre_usuario_seleccionado != "Seleccione una opción":
                 # Decifrar y mostrar datos
-                decifrar_y_mostrar_datos(nombre_usuario_seleccionado, secret_key.read())
+                decifrar_y_mostrar_datos(nombre_usuario_seleccionado, secret_key.read(), fecha_inicio, fecha_fin)
         
         if __name__ == "__main__":
             main_decrypt()
         pass
+    
+    
     elif option == 'Dashboard':
-
         def obtener_dataframe_completo():
-            # Datos de conexión
-            endpoint = "usersview.cbyy8g222bry.us-east-2.rds.amazonaws.com"
-            port = 3306
-            user = "admin"
-            password = "123Segurita."
-            database = "formularios"
-            
-            try:
-                # Establecer la conexión
-                connection = mysql.connector.connect(
-                    host=endpoint,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database
-                )
-                
-                # Verificar si la conexión fue exitosa
-                if connection.is_connected():
-                    #st.info("¡Conexión exitosa!")
-                    
-                    # Consultar toda la tabla
+            connection = conectar_bd()
+            if connection:
+                try:
                     query = "SELECT * FROM formularios"
                     df = pd.read_sql(query, connection)
-                    
-                    # Cerrar la conexión
-                    connection.close()
-                    
                     return df
-                else:
-                    st.error("No se pudo conectar a la base de datos.")
-                    return None
-            except mysql.connector.Error as err:
-                st.error(f"Error: {err}")
-                return None
-        
+                finally:
+                    connection.close()
+            return None
 
-        
         def crear_dashboard(df):
             st.title("Dashboard de Formularios")
             
@@ -566,7 +449,6 @@ def main():
             genero_counts = df_filtrado['genero'].value_counts()
             fig3 = px.pie(values=genero_counts.values, names=genero_counts.index, title='Distribución de Género')
             st.plotly_chart(fig3)
-
         
         def main_dash():
             # Uso de las funciones
@@ -574,25 +456,110 @@ def main():
             if df_formularios is not None:
                 crear_dashboard(df_formularios)
             else:
-                st.error("No se pudo obtener la informacion.")
+                st.error("No se pudo obtener la información.")
             
             pass
-
-    elif option == 'Administrar usuarios':
-        st.header("Administrar usuarios")
-
-        # Mostrar lista de usuarios y permitir cambiar su rol
-        usuario_seleccionado = st.selectbox("Seleccionar usuario", list(USUARIOS.keys()))
-        nuevo_rol = st.selectbox("Seleccionar nuevo rol", ["jerarquia_mayor", "jerarquia_media", "jerarquia_menor"])
             
-        if st.button("Actualizar rol"):
-            if usuario_seleccionado in USUARIOS:
-                USUARIOS[usuario_seleccionado]["rol"] = nuevo_rol
-                st.success(f"Rol de {usuario_seleccionado} actualizado a {nuevo_rol}")
-                
         if __name__ == "__main__":
             main_dash()
+    
+    elif option == 'Administrar usuarios':
+        # Funciones para la administración de usuarios
+        def crear_tabla_usuarios():
+            connection = conectar_bd()
+            if connection:
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (
+                                    id INT AUTO_INCREMENT PRIMARY KEY,
+                                    username VARCHAR(255) UNIQUE,
+                                    password VARCHAR(255),
+                                    rol VARCHAR(50))''')
+                    connection.commit()
+                finally:
+                    connection.close()
+
+        def agregar_usuario(username, password, rol):
+            connection = conectar_bd()
+            if connection:
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute("INSERT INTO usuarios (username, password, rol) VALUES (%s, %s, %s)", (username, password, rol))
+                    connection.commit()
+                finally:
+                    connection.close()
+
+        def obtener_usuarios():
+            connection = conectar_bd()
+            if connection:
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute("SELECT username, rol FROM usuarios")
+                    usuarios = cursor.fetchall()
+                    return {usuario[0]: {"rol": usuario[1]} for usuario in usuarios}
+                finally:
+                    connection.close()
+            return {}
+
+        def actualizar_rol_usuario(username, nuevo_rol):
+            connection = conectar_bd()
+            if connection:
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute("UPDATE usuarios SET rol = %s WHERE username = %s", (nuevo_rol, username))
+                    connection.commit()
+                finally:
+                    connection.close()
+
+        def eliminar_usuario(username):
+            connection = conectar_bd()
+            if connection:
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute("DELETE FROM usuarios WHERE username = %s", (username,))
+                    connection.commit()
+                finally:
+                    connection.close()
+
+        crear_tabla_usuarios()
         
+        st.header("Administrar usuarios")
+        
+        # Obtener la lista actual de usuarios
+        USUARIOS = obtener_usuarios()
+        
+        # Sección para actualizar el rol de un usuario existente
+        st.subheader("Actualizar Rol de Usuario")
+        if USUARIOS:
+            usuario_seleccionado = st.selectbox("Seleccionar usuario", list(USUARIOS.keys()))
+            nuevo_rol = st.selectbox("Seleccionar nuevo rol", ["jerarquia_mayor", "jerarquia_media", "jerarquia_menor"])
+            if st.button("Actualizar rol"):
+                actualizar_rol_usuario(usuario_seleccionado, nuevo_rol)
+                st.success(f"Rol de {usuario_seleccionado} actualizado a {nuevo_rol}")
+        else:
+            st.warning("No hay usuarios registrados.")
+        
+        # Sección para agregar un nuevo usuario
+        st.subheader("Agregar Nuevo Usuario")
+        nuevo_usuario = st.text_input("Nombre de usuario nuevo")
+        nueva_contrasena = st.text_input("Contraseña nueva", type="password")
+        nuevo_rol = st.selectbox("Rol del nuevo usuario", ["jerarquia_mayor", "jerarquia_media", "jerarquia_menor"], key='nuevo_rol')
+        if st.button("Agregar usuario"):
+            if nuevo_usuario in USUARIOS:
+                st.error("El nombre de usuario ya existe.")
+            else:
+                agregar_usuario(nuevo_usuario, nueva_contrasena, nuevo_rol)
+                st.success(f"Usuario {nuevo_usuario} agregado con rol {nuevo_rol}")
+        
+        # Sección para eliminar un usuario existente
+        st.subheader("Eliminar Usuario")
+        if USUARIOS:
+            usuario_a_eliminar = st.selectbox("Seleccionar usuario a eliminar", list(USUARIOS.keys()), key='usuario_a_eliminar')
+            if st.button("Eliminar usuario"):
+                eliminar_usuario(usuario_a_eliminar)
+                st.success(f"Usuario {usuario_a_eliminar} eliminado")
+        else:
+            st.warning("No hay usuarios registrados.")
 
 if __name__ == '__main__':
     login()
